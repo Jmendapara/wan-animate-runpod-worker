@@ -133,6 +133,13 @@ for repo_url in "${REPOS[@]}"; do
     fi
 done
 
+# ComfyUI-Frame-Interpolation's install.py tries cupy-wheel, which builds from
+# source and fails on Python 3.12 (no pkg_resources). Without cupy, the RIFE
+# node doesn't register. Install the prebuilt CUDA 12.x wheel directly.
+log "Installing cupy-cuda12x (required for RIFEInterpolation)..."
+"$PYTHON_BIN" -m pip install -q --root-user-action=ignore cupy-cuda12x </dev/null \
+    || warn "cupy-cuda12x install failed — RIFEInterpolation may not load"
+
 # ─── Model Downloads ─────────────────────────────────────────────────────────
 
 echo ""
