@@ -10,6 +10,8 @@ CUSTOM_NODES_DIR="${COMFY_DIR}/custom_nodes"
 MODELS_DIR="${COMFY_DIR}/models"
 MAX_PARALLEL=3
 HAS_ARIA2=false
+# RunPod slim templates ship python3 only; fall back if bare `python` is missing.
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python || command -v python3 || echo python3)}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -119,7 +121,7 @@ for repo_url in "${REPOS[@]}"; do
 
     if [ -z "$node_err" ] && [ -f "$target/install.py" ]; then
         log "  running install.py for $repo_name..."
-        python "$target/install.py" </dev/null || node_err="install.py failed"
+        "$PYTHON_BIN" "$target/install.py" </dev/null || node_err="install.py failed"
     fi
 
     if [ -n "$node_err" ]; then
