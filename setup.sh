@@ -1,8 +1,8 @@
 #!/bin/bash
 set -uo pipefail
 
-# Exit trap — print where we died if we exit unexpectedly.
-trap 'ec=$?; echo "[EXIT] code=$ec last_cmd=${BASH_COMMAND}"' EXIT
+# On unexpected non-zero exit, print the last command so the failure isn't silent.
+trap 'ec=$?; [ $ec -ne 0 ] && echo "[EXIT] code=$ec last_cmd=${BASH_COMMAND}"' EXIT
 
 SECONDS=0
 COMFY_DIR="${COMFY_DIR:-/workspace/runpod-slim/ComfyUI}"
@@ -87,37 +87,39 @@ echo " Installing Custom Nodes (${#REPOS[@]})"
 echo "============================================"
 
 node_ok=0
-node_fail=0
+failed_nodes=()
 
 for repo_url in "${REPOS[@]}"; do
     repo_name=$(basename "$repo_url" .git)
     target="${CUSTOM_NODES_DIR}/${repo_name}"
+    node_err=""
 
     if [ -d "$target/.git" ]; then
         log "Updating $repo_name..."
-        git -C "$target" pull --ff-only -q </dev/null || warn "Pull failed for $repo_name, using existing"
+        git -C "$target" pull --ff-only -q </dev/null || node_err="git pull failed"
     else
         log "Cloning $repo_name..."
-        git clone --depth 1 -q "$repo_url" "$target" </dev/null || { err "Clone failed: $repo_name"; node_fail=$((node_fail + 1)); continue; }
+        git clone --depth 1 -q "$repo_url" "$target" </dev/null || node_err="git clone failed"
     fi
-    log "  git step done for $repo_name"
 
-    if [ -f "$target/requirements.txt" ]; then
+    if [ -z "$node_err" ] && [ -f "$target/requirements.txt" ]; then
         log "  pip install for $repo_name..."
-        pip install -q -r "$target/requirements.txt" </dev/null || warn "pip install failed for $repo_name"
-        log "  pip step done for $repo_name"
+        pip install -q -r "$target/requirements.txt" </dev/null || node_err="pip install failed"
     fi
 
-    if [ -f "$target/install.py" ]; then
+    if [ -z "$node_err" ] && [ -f "$target/install.py" ]; then
         log "  running install.py for $repo_name..."
-        python "$target/install.py" </dev/null || warn "install.py failed for $repo_name"
-        log "  install.py step done for $repo_name"
+        python "$target/install.py" </dev/null || node_err="install.py failed"
     fi
 
-    node_ok=$((node_ok + 1))
+    if [ -n "$node_err" ]; then
+        err "  ✗ $repo_name: $node_err"
+        failed_nodes+=("$repo_name ($node_err)")
+    else
+        ok "  ✓ $repo_name"
+        node_ok=$((node_ok + 1))
+    fi
 done
-
-ok "Custom nodes: $node_ok installed, $node_fail failed"
 
 # ─── Model Downloads ─────────────────────────────────────────────────────────
 
@@ -206,12 +208,22 @@ echo "  Disk usage:    $(du -sh "${MODELS_DIR}" 2>/dev/null | cut -f1)"
 echo "  Elapsed:       ${SECONDS}s"
 echo ""
 
+if [ ${#failed_nodes[@]} -gt 0 ]; then
+    warn "Failed custom nodes:"
+    for n in "${failed_nodes[@]}"; do
+        warn "  - $n"
+    done
+fi
+
 if [ ${#missing[@]} -gt 0 ]; then
-    warn "Missing files: ${missing[*]}"
-    warn "Re-run this script to retry failed downloads."
+    warn "Missing model files: ${missing[*]}"
+fi
+
+if [ ${#failed_nodes[@]} -gt 0 ] || [ ${#missing[@]} -gt 0 ]; then
+    warn "Re-run this script to retry."
 fi
 
 echo ""
 echo "  Start ComfyUI:"
-echo "    cd /workspace/ComfyUI && python main.py --listen 0.0.0.0 --port 8188"
+echo "    cd ${COMFY_DIR} && python main.py --listen 0.0.0.0 --port 8188"
 echo ""
