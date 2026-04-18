@@ -1,6 +1,9 @@
 #!/bin/bash
 set -uo pipefail
 
+# Exit trap — print where we died if we exit unexpectedly.
+trap 'ec=$?; echo "[EXIT] code=$ec last_cmd=${BASH_COMMAND}"' EXIT
+
 SECONDS=0
 COMFY_DIR="${COMFY_DIR:-/workspace/runpod-slim/ComfyUI}"
 CUSTOM_NODES_DIR="${COMFY_DIR}/custom_nodes"
@@ -92,18 +95,23 @@ for repo_url in "${REPOS[@]}"; do
 
     if [ -d "$target/.git" ]; then
         log "Updating $repo_name..."
-        git -C "$target" pull --ff-only -q </dev/null 2>/dev/null || warn "Pull failed for $repo_name, using existing"
+        git -C "$target" pull --ff-only -q </dev/null || warn "Pull failed for $repo_name, using existing"
     else
         log "Cloning $repo_name..."
         git clone --depth 1 -q "$repo_url" "$target" </dev/null || { err "Clone failed: $repo_name"; node_fail=$((node_fail + 1)); continue; }
     fi
+    log "  git step done for $repo_name"
 
     if [ -f "$target/requirements.txt" ]; then
-        pip install -q -r "$target/requirements.txt" </dev/null 2>/dev/null || warn "pip install failed for $repo_name"
+        log "  pip install for $repo_name..."
+        pip install -q -r "$target/requirements.txt" </dev/null || warn "pip install failed for $repo_name"
+        log "  pip step done for $repo_name"
     fi
 
     if [ -f "$target/install.py" ]; then
-        python "$target/install.py" </dev/null 2>/dev/null || warn "install.py failed for $repo_name"
+        log "  running install.py for $repo_name..."
+        python "$target/install.py" </dev/null || warn "install.py failed for $repo_name"
+        log "  install.py step done for $repo_name"
     fi
 
     node_ok=$((node_ok + 1))
