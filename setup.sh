@@ -94,10 +94,20 @@ for repo_url in "${REPOS[@]}"; do
     target="${CUSTOM_NODES_DIR}/${repo_name}"
     node_err=""
 
+    # Update if we have a .git dir; if that fails, drop the dir and re-clone.
+    # Shallow clones break under upstream rebases, so pull --ff-only can fail
+    # even though the repo is otherwise fine.
     if [ -d "$target/.git" ]; then
         log "Updating $repo_name..."
-        git -C "$target" pull --ff-only -q </dev/null || node_err="git pull failed"
-    else
+        if ! git -C "$target" pull --ff-only -q </dev/null; then
+            warn "pull failed for $repo_name, re-cloning"
+            rm -rf "$target"
+        fi
+    fi
+
+    if [ ! -d "$target/.git" ]; then
+        # Clean up any stale/partial directory (prior clone that aborted mid-way).
+        [ -e "$target" ] && rm -rf "$target"
         log "Cloning $repo_name..."
         git clone --depth 1 -q "$repo_url" "$target" </dev/null || node_err="git clone failed"
     fi
