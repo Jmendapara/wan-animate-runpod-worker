@@ -237,5 +237,5 @@ fi
 
 echo ""
 echo "  Start ComfyUI:"
-echo "    cd ${COMFY_DIR} && python main.py --listen 0.0.0.0 --port 8188"
+echo "    cd ${COMFY_DIR} && ${PYTHON_BIN} main.py --listen 0.0.0.0 --port 8188"
 echo ""
