@@ -162,6 +162,9 @@ MODELS["${MODELS_DIR}/loras/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.s
 MODELS["${MODELS_DIR}/detection/yolov10m.onnx"]="https://huggingface.co/Wan-AI/Wan2.2-Animate-14B/resolve/main/process_checkpoint/det/yolov10m.onnx"
 MODELS["${MODELS_DIR}/detection/vitpose-l-wholebody.onnx"]="https://huggingface.co/JunkyByte/easy_ViTPose/resolve/main/onnx/wholebody/vitpose-l-wholebody.onnx"
 
+# SAM 2.1 (for ComfyUI-segment-anything-2)
+MODELS["${MODELS_DIR}/sam2/sam2.1_hiera_base_plus.safetensors"]="https://huggingface.co/Kijai/sam2-safetensors/resolve/main/sam2.1_hiera_base_plus.safetensors"
+
 # Upscale
 MODELS["${MODELS_DIR}/upscale_models/4x_foolhardy_Remacri.pth"]="https://huggingface.co/FacehugmanIII/4x_foolhardy_Remacri/resolve/main/4x_foolhardy_Remacri.pth"
 
