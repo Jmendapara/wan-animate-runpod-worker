@@ -95,7 +95,7 @@ for repo_url in "${REPOS[@]}"; do
         git -C "$target" pull --ff-only -q 2>/dev/null || warn "Pull failed for $repo_name, using existing"
     else
         log "Cloning $repo_name..."
-        git clone --depth 1 -q "$repo_url" "$target" || { err "Clone failed: $repo_name"; ((node_fail++)); continue; }
+        git clone --depth 1 -q "$repo_url" "$target" || { err "Clone failed: $repo_name"; node_fail=$((node_fail + 1)); continue; }
     fi
 
     if [ -f "$target/requirements.txt" ]; then
@@ -106,7 +106,7 @@ for repo_url in "${REPOS[@]}"; do
         python "$target/install.py" 2>/dev/null || warn "install.py failed for $repo_name"
     fi
 
-    ((node_ok++))
+    node_ok=$((node_ok + 1))
 done
 
 ok "Custom nodes: $node_ok installed, $node_fail failed"
@@ -150,11 +150,11 @@ for dest in "${!MODELS[@]}"; do
     url="${MODELS[$dest]}"
     download "$url" "$dest" &
     dl_pids+=($!)
-    ((job_count++))
+    job_count=$((job_count + 1))
 
     if ((job_count >= MAX_PARALLEL)); then
         wait -n 2>/dev/null || true
-        ((job_count--))
+        job_count=$((job_count - 1))
     fi
 done
 
@@ -177,11 +177,11 @@ for dest in "${!MODELS[@]}"; do
     fname=$(basename "$dest")
     if [ -f "$dest" ] && [ -s "$dest" ]; then
         ok "  ✓ $fname"
-        ((model_ok++))
+        model_ok=$((model_ok + 1))
     else
         err "  ✗ $fname"
         missing+=("$fname")
-        ((model_fail++))
+        model_fail=$((model_fail + 1))
     fi
 done
 
