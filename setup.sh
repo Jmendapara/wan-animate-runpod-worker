@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+set -uo pipefail
 
 SECONDS=0
 COMFY_DIR="${COMFY_DIR:-/workspace/runpod-slim/ComfyUI}"
@@ -31,7 +31,7 @@ if command -v aria2c &>/dev/null; then
     HAS_ARIA2=true
     log "aria2c already installed"
 else
-    apt-get update -qq && apt-get install -y -qq aria2 && HAS_ARIA2=true || warn "aria2 install failed, falling back to wget"
+    apt-get update -qq </dev/null && apt-get install -y -qq aria2 </dev/null && HAS_ARIA2=true || warn "aria2 install failed, falling back to wget"
 fi
 
 # ─── Download helper ─────────────────────────────────────────────────────────
@@ -50,12 +50,12 @@ download() {
     filename=$(basename "$dest")
 
     if $HAS_ARIA2; then
-        aria2c -x 16 -s 16 --min-split-size=50M -c -d "$(dirname "$dest")" -o "$filename" "$url" || {
+        aria2c -x 16 -s 16 --min-split-size=50M -c -d "$(dirname "$dest")" -o "$filename" "$url" </dev/null || {
             err "Failed: $filename"
             return 1
         }
     else
-        wget -c -q --show-progress -O "$dest" "$url" || {
+        wget -c -q --show-progress -O "$dest" "$url" </dev/null || {
             err "Failed: $filename"
             return 1
         }
@@ -92,18 +92,18 @@ for repo_url in "${REPOS[@]}"; do
 
     if [ -d "$target/.git" ]; then
         log "Updating $repo_name..."
-        git -C "$target" pull --ff-only -q 2>/dev/null || warn "Pull failed for $repo_name, using existing"
+        git -C "$target" pull --ff-only -q </dev/null 2>/dev/null || warn "Pull failed for $repo_name, using existing"
     else
         log "Cloning $repo_name..."
-        git clone --depth 1 -q "$repo_url" "$target" || { err "Clone failed: $repo_name"; node_fail=$((node_fail + 1)); continue; }
+        git clone --depth 1 -q "$repo_url" "$target" </dev/null || { err "Clone failed: $repo_name"; node_fail=$((node_fail + 1)); continue; }
     fi
 
     if [ -f "$target/requirements.txt" ]; then
-        pip install -q -r "$target/requirements.txt" 2>/dev/null || warn "pip install failed for $repo_name"
+        pip install -q -r "$target/requirements.txt" </dev/null 2>/dev/null || warn "pip install failed for $repo_name"
     fi
 
     if [ -f "$target/install.py" ]; then
-        python "$target/install.py" 2>/dev/null || warn "install.py failed for $repo_name"
+        python "$target/install.py" </dev/null 2>/dev/null || warn "install.py failed for $repo_name"
     fi
 
     node_ok=$((node_ok + 1))
