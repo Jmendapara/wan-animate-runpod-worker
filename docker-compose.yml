@@ -1,0 +1,25 @@
+services:
+  wan-animate-worker:
+    image: wan-animate-runpod-worker:dev
+    pull_policy: never
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - SERVE_API_LOCALLY=true
+      # R2 credentials for input download + output upload. Leave these unset
+      # when testing with a local workflow that doesn't reference r2_inputs.
+      # - BUCKET_ENDPOINT_URL=
+      # - BUCKET_ACCESS_KEY_ID=
+      # - BUCKET_SECRET_ACCESS_KEY=
+      # - R2_BUCKET_NAME=
+    ports:
+      - "8000:8000"   # RunPod handler
+      - "8188:8188"   # ComfyUI UI
+    volumes:
+      - ./data/comfyui/output:/comfyui/output
+      - ./data/runpod-volume:/runpod-volume

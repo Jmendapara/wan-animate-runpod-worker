@@ -1,0 +1,146 @@
+{
+  "title": "Wan 2.2 Animate",
+  "description": "Animate a character image with a driving video using Wan 2.2 Animate 14B (ComfyUI). Inputs pulled from R2, output uploaded back to R2 with audio.",
+  "type": "serverless",
+  "category": "video",
+  "iconUrl": "https://cpjrphpz3t5wbwfe.public.blob.vercel-storage.com/comfy-ui.png",
+  "config": {
+    "runsOn": "GPU",
+    "containerDiskInGb": 80,
+    "gpuIds": "H100_80,A100_80",
+    "gpuCount": 1,
+    "allowedCudaVersions": ["12.7", "12.6"],
+    "env": [
+      {
+        "key": "BUCKET_ENDPOINT_URL",
+        "input": {
+          "name": "R2 / S3 Endpoint URL",
+          "type": "string",
+          "description": "R2 endpoint (e.g. https://<account-id>.r2.cloudflarestorage.com). Required — used for both input downloads and output uploads.",
+          "default": "",
+          "advanced": false
+        }
+      },
+      {
+        "key": "BUCKET_ACCESS_KEY_ID",
+        "input": {
+          "name": "R2 Access Key ID",
+          "type": "string",
+          "description": "R2 API token access key. Required.",
+          "default": "",
+          "advanced": false
+        }
+      },
+      {
+        "key": "BUCKET_SECRET_ACCESS_KEY",
+        "input": {
+          "name": "R2 Secret Access Key",
+          "type": "string",
+          "description": "R2 API token secret. Required.",
+          "default": "",
+          "advanced": false
+        }
+      },
+      {
+        "key": "R2_BUCKET_NAME",
+        "input": {
+          "name": "R2 Output Bucket",
+          "type": "string",
+          "description": "Bucket the final -audio.mp4 is uploaded to. Required.",
+          "default": "",
+          "advanced": false
+        }
+      },
+      {
+        "key": "R2_INPUT_BUCKET_NAME",
+        "input": {
+          "name": "R2 Input Bucket (optional)",
+          "type": "string",
+          "description": "Bucket the reference image + driving video are fetched from. Defaults to R2_BUCKET_NAME if unset.",
+          "default": "",
+          "advanced": true
+        }
+      },
+      {
+        "key": "COMFY_ORG_API_KEY",
+        "input": {
+          "name": "Comfy.org API Key",
+          "type": "string",
+          "description": "Optional Comfy.org API key for API Nodes.",
+          "default": "",
+          "advanced": true
+        }
+      },
+      {
+        "key": "SERVE_API_LOCALLY",
+        "input": {
+          "name": "Serve API Locally (dev)",
+          "type": "boolean",
+          "description": "Dev only: run a local test API on 0.0.0.0.",
+          "default": false,
+          "advanced": true
+        }
+      },
+      {
+        "key": "COMFY_LOG_LEVEL",
+        "input": {
+          "name": "ComfyUI Log Level",
+          "type": "string",
+          "description": "Log level for ComfyUI (DEBUG, INFO, WARNING, ERROR, CRITICAL).",
+          "default": "DEBUG",
+          "advanced": true
+        }
+      },
+      {
+        "key": "WEBSOCKET_RECONNECT_ATTEMPTS",
+        "input": {
+          "name": "Websocket Reconnect Attempts",
+          "type": "number",
+          "description": "How many times to retry if the WS drops mid-job.",
+          "default": 5,
+          "advanced": true
+        }
+      },
+      {
+        "key": "WEBSOCKET_RECONNECT_DELAY_S",
+        "input": {
+          "name": "Websocket Reconnect Delay (s)",
+          "type": "number",
+          "description": "Seconds between reconnect attempts.",
+          "default": 3,
+          "advanced": true
+        }
+      },
+      {
+        "key": "WEBSOCKET_TRACE",
+        "input": {
+          "name": "Websocket Trace",
+          "type": "boolean",
+          "description": "Detailed frame-level WS logs (noisy, debug only).",
+          "default": false,
+          "advanced": true
+        }
+      },
+      {
+        "key": "REFRESH_WORKER",
+        "input": {
+          "name": "Refresh Worker",
+          "type": "boolean",
+          "description": "Restart the worker after each job for a clean state.",
+          "default": false,
+          "advanced": true
+        }
+      },
+      {
+        "key": "NETWORK_VOLUME_DEBUG",
+        "input": {
+          "name": "Network Volume Debug",
+          "type": "boolean",
+          "description": "Log network-volume diagnostics at the start of each job.",
+          "default": true,
+          "advanced": true
+        }
+      }
+    ]
+  }
+}
