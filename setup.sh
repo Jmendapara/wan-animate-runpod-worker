@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SECONDS=0
-COMFY_DIR="/workspace/ComfyUI"
+COMFY_DIR="${COMFY_DIR:-/workspace/runpod-slim/ComfyUI}"
 CUSTOM_NODES_DIR="${COMFY_DIR}/custom_nodes"
 MODELS_DIR="${COMFY_DIR}/models"
 MAX_PARALLEL=3
