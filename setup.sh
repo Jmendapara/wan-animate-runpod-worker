@@ -10,8 +10,23 @@ CUSTOM_NODES_DIR="${COMFY_DIR}/custom_nodes"
 MODELS_DIR="${COMFY_DIR}/models"
 MAX_PARALLEL=3
 HAS_ARIA2=false
-# RunPod slim templates ship python3 only; fall back if bare `python` is missing.
+
+# If ComfyUI ships its own venv (RunPod slim uses .venv-cu128), install into
+# THAT python — otherwise requirements end up in system site-packages and the
+# running ComfyUI never sees them.
+if [ -z "${PYTHON_BIN:-}" ]; then
+    for candidate in \
+        "${COMFY_DIR}/.venv-cu128/bin/python" \
+        "${COMFY_DIR}/.venv/bin/python" \
+        "${COMFY_DIR}/venv/bin/python"; do
+        if [ -x "$candidate" ]; then
+            PYTHON_BIN="$candidate"
+            break
+        fi
+    done
+fi
 PYTHON_BIN="${PYTHON_BIN:-$(command -v python || command -v python3 || echo python3)}"
+PIP_CMD=("$PYTHON_BIN" -m pip install -q --root-user-action=ignore)
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -116,7 +131,7 @@ for repo_url in "${REPOS[@]}"; do
 
     if [ -z "$node_err" ] && [ -f "$target/requirements.txt" ]; then
         log "  pip install for $repo_name..."
-        pip install -q -r "$target/requirements.txt" </dev/null || node_err="pip install failed"
+        "${PIP_CMD[@]}" -r "$target/requirements.txt" </dev/null || node_err="pip install failed"
     fi
 
     if [ -z "$node_err" ] && [ -f "$target/install.py" ]; then
@@ -136,8 +151,8 @@ done
 # ComfyUI-Frame-Interpolation's install.py tries cupy-wheel, which builds from
 # source and fails on Python 3.12 (no pkg_resources). Without cupy, the RIFE
 # node doesn't register. Install the prebuilt CUDA 12.x wheel directly.
-log "Installing cupy-cuda12x (required for RIFEInterpolation)..."
-"$PYTHON_BIN" -m pip install -q --root-user-action=ignore cupy-cuda12x </dev/null \
+log "Installing cupy-cuda12x into $PYTHON_BIN (required for RIFEInterpolation)..."
+"${PIP_CMD[@]}" cupy-cuda12x </dev/null \
     || warn "cupy-cuda12x install failed — RIFEInterpolation may not load"
 
 # ─── Model Downloads ─────────────────────────────────────────────────────────
