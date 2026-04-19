@@ -85,7 +85,7 @@
       "42": {
         "inputs": {
           "image": [
-            "28",
+            "300",
             0
           ]
         },
@@ -515,7 +515,7 @@
       },
       "186": {
         "inputs": {
-          "frame_rate": 16,
+          "frame_rate": 32,
           "loop_count": 0,
           "filename_prefix": "WanAnimate\\Wanimate",
           "format": "video/h264-mp4",
@@ -572,19 +572,38 @@
         "_meta": {
           "title": "\ud83d\udd27 Simple Math"
         }
+      },
+      "300": {
+        "inputs": {
+          "ckpt_name": "rife47.pth",
+          "clear_cache_after_n_frames": 10,
+          "multiplier": 2,
+          "fast_mode": true,
+          "ensemble": true,
+          "scale_factor": 1.0,
+          "frames": [
+            "28",
+            0
+          ]
+        },
+        "class_type": "RIFE VFI",
+        "_meta": {
+          "title": "Interpolate 2x (16\u219232 fps)"
+        }
       }
     },
     "r2_inputs": [
       {
         "node_id": "57",
         "input_field": "image",
-        "r2_key": "refs/character.png"
+        "r2_key": "test-media/uploaded_image.PNG"
       },
       {
         "node_id": "63",
         "input_field": "video",
-        "r2_key": "drives/dance.mp4"
+        "r2_key": "test-media/uploaded_video.mp4"
       }
-    ]
+    ],
+    "uid": "test-user-123"
   }
 }

@@ -524,6 +524,190 @@ def _is_wanted_output(media_key, filename):
 
 
 # ---------------------------------------------------------------------------
+# Output FPS matching — interpolate to 32 fps via RIFE (in-workflow), then
+# optionally drop to 24/30 fps via ffmpeg to match the driving video's
+# native rate. Wan2.2-Animate emits 16 fps natively; RIFE doubles that.
+# ---------------------------------------------------------------------------
+
+# Must match the RIFE node id used by the server's model builder.
+RIFE_NODE_ID = "300"
+
+
+def probe_video_fps(local_path):
+    """Return the video's nominal r_frame_rate as a float, or None on failure."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "0", "-of", "csv=p=0",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=r_frame_rate",
+                local_path,
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        rate_str = (result.stdout or "").strip()
+        if not rate_str:
+            return None
+        if "/" in rate_str:
+            num_str, den_str = rate_str.split("/", 1)
+            num, den = float(num_str), float(den_str)
+            if den == 0:
+                return None
+            return num / den
+        return float(rate_str)
+    except Exception as exc:
+        print(f"worker-comfyui - ffprobe failed for {local_path}: {exc}")
+        return None
+
+
+def pick_target_fps(native_fps):
+    """Round a native fps down to one of {16, 24, 30, 50, 60}.
+
+    Half-integer thresholds absorb NTSC drop-frame rates:
+      59.94 -> 60, 29.97 -> 30, 23.976 -> 24.
+    `None` (probe failed) defaults to 30 — safer to interpolate than under-deliver.
+    """
+    if native_fps is None:
+        return 30
+    if native_fps >= 59.5:
+        return 60
+    if native_fps >= 49.5:
+        return 50
+    if native_fps >= 29.5:
+        return 30
+    if native_fps >= 23.5:
+        return 24
+    return 16
+
+
+def pick_rife_multiplier(target_fps):
+    """Smallest even RIFE multiplier whose 16*multiplier output is >= target.
+      target 16          -> 1 (skip RIFE)
+      target 24 or 30    -> 2 (intermediate 32 fps)
+      target 50 or 60    -> 4 (intermediate 64 fps)
+    """
+    if target_fps <= 16:
+        return 1
+    if target_fps <= 32:
+        return 2
+    return 4
+
+
+def configure_rife_for_target(workflow, target_fps):
+    """Configure RIFE + VHS_VideoCombine for the chosen target fps bucket.
+    Returns the intermediate fps that ComfyUI will actually output (caller
+    uses it to decide whether an ffmpeg resample step is needed).
+
+    Server always emits `multiplier: 2` + `frame_rate: 32`, so:
+      - target 16: prune RIFE entirely, rewire node 42, reset frame_rate to 16.
+      - target 24/30: no-op (server's default already matches).
+      - target 50/60: bump multiplier to 4 and frame_rate to 64.
+
+    Back-compat: if the RIFE node is absent (old server), we still set node 186's
+    frame_rate to match our intent, but ComfyUI's actual output will be 16 fps and
+    the downstream ffmpeg step will duplicate frames to hit the target. Not ideal
+    but won't crash.
+    """
+    multiplier = pick_rife_multiplier(target_fps)
+    rife_present = RIFE_NODE_ID in workflow
+
+    if multiplier == 1:
+        # Collapse RIFE entirely — target matches ComfyUI's native 16 fps.
+        if rife_present:
+            node_42 = workflow.get("42")
+            if isinstance(node_42, dict):
+                inputs_42 = node_42.get("inputs") or {}
+                if inputs_42.get("image") == [RIFE_NODE_ID, 0]:
+                    inputs_42["image"] = ["28", 0]
+            del workflow[RIFE_NODE_ID]
+        node_186 = workflow.get("186")
+        if isinstance(node_186, dict):
+            node_186.setdefault("inputs", {})["frame_rate"] = 16
+        print(
+            f"worker-comfyui - target_fps=16: pruned RIFE (present={rife_present}), "
+            f"reset node 186 frame_rate to 16"
+        )
+        return 16
+
+    if multiplier == 2:
+        # Server's default workflow already matches (multiplier 2, frame_rate 32).
+        # Nothing to rewrite, but still verify node 186 is set correctly in case
+        # the caller's workflow drifted.
+        node_186 = workflow.get("186")
+        if isinstance(node_186, dict):
+            node_186.setdefault("inputs", {})["frame_rate"] = 32
+        return 32
+
+    # multiplier == 4: promote RIFE to ×4 and crank node 186 to 64.
+    if rife_present:
+        workflow[RIFE_NODE_ID].setdefault("inputs", {})["multiplier"] = 4
+    node_186 = workflow.get("186")
+    if isinstance(node_186, dict):
+        node_186.setdefault("inputs", {})["frame_rate"] = 64
+    print(
+        f"worker-comfyui - target_fps={target_fps}: set RIFE multiplier to 4 "
+        f"(present={rife_present}), set node 186 frame_rate to 64"
+    )
+    return 64
+
+
+def resample_fps(file_bytes, target_fps, current_fps):
+    """Re-encode mp4 bytes to a different container fps via ffmpeg's fps filter.
+    Drops/duplicates frames evenly. Audio is stream-copied untouched.
+    Returns the original bytes on ffmpeg failure or when target == current.
+    """
+    if not file_bytes or target_fps == current_fps:
+        return file_bytes
+    import subprocess, tempfile
+    in_path = out_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as inf:
+            inf.write(file_bytes)
+            in_path = inf.name
+        out_path = in_path + f"_{target_fps}.mp4"
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-i", in_path,
+                "-vf", f"fps={target_fps}",
+                "-c:a", "copy",
+                out_path,
+            ],
+            capture_output=True, text=True, timeout=300,
+        )
+        if result.returncode != 0:
+            print(
+                f"worker-comfyui - ffmpeg fps resample to {target_fps} failed: "
+                f"{result.stderr.strip()[:500]}"
+            )
+            return file_bytes
+        with open(out_path, "rb") as f:
+            return f.read()
+    except Exception as exc:
+        print(f"worker-comfyui - resample_fps error: {exc}")
+        return file_bytes
+    finally:
+        for p in (in_path, out_path):
+            if p:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+
+
+def _find_driving_video_local_path(r2_inputs):
+    """Locate the driving video under COMFY_INPUT_DIR based on the r2_inputs
+    entry for node 63 (`input_field: 'video'`). Returns None if absent."""
+    for entry in r2_inputs or []:
+        if str(entry.get("node_id")) == "63" and entry.get("input_field") == "video":
+            r2_key = entry.get("r2_key")
+            if r2_key:
+                return os.path.join(COMFY_INPUT_DIR, os.path.basename(r2_key))
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Main handler
 # ---------------------------------------------------------------------------
 
@@ -559,6 +743,23 @@ def handler(job):
         print(f"worker-comfyui - R2 input download failed: {e}")
         print(traceback.format_exc())
         return {"error": f"Failed to download R2 inputs: {e}"}
+
+    # Decide output fps based on the driving video's native rate, rounding down
+    # to one of {16, 24, 30, 50, 60}. Wan2.2-Animate emits 16 fps; RIFE is used
+    # at ×2 (→32 fps) or ×4 (→64 fps) when needed. ffmpeg trims the intermediate
+    # down to the exact bucket value after ComfyUI finishes.
+    driving_video_path = _find_driving_video_local_path(r2_inputs)
+    if driving_video_path and os.path.exists(driving_video_path):
+        native_fps = probe_video_fps(driving_video_path)
+    else:
+        native_fps = None
+    target_fps = pick_target_fps(native_fps)
+    intermediate_fps = configure_rife_for_target(workflow, target_fps)
+    print(
+        f"worker-comfyui - driving_video={driving_video_path!s}, "
+        f"native_fps={native_fps}, target_fps={target_fps}, "
+        f"intermediate_fps={intermediate_fps}"
+    )
 
     ws = None
     client_id = str(uuid.uuid4())
@@ -713,6 +914,26 @@ def handler(job):
                         error_msg = f"Failed to fetch {media_key} data for {filename} from /view endpoint."
                         errors.append(error_msg)
                         continue
+
+                    # Match output fps to the driving video's target bucket. ComfyUI
+                    # emits at `intermediate_fps` (16, 32, or 64); ffmpeg trims down
+                    # to target when they differ. Targets that happen to match the
+                    # intermediate (e.g. 24/30 target when intermediate is 32 — no,
+                    # they differ; the only no-op cases are target 16 on 16 fps
+                    # intermediate) skip the ffmpeg step.
+                    if (
+                        filename.lower().endswith(".mp4")
+                        and target_fps != intermediate_fps
+                    ):
+                        original_size = len(file_bytes)
+                        file_bytes = resample_fps(
+                            file_bytes, target_fps, current_fps=intermediate_fps
+                        )
+                        print(
+                            f"worker-comfyui - Resampled {filename} from "
+                            f"{intermediate_fps} -> {target_fps} fps "
+                            f"({original_size} -> {len(file_bytes)} bytes)"
+                        )
 
                     if os.environ.get("BUCKET_ENDPOINT_URL"):
                         try:
