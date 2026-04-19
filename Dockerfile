@@ -63,6 +63,16 @@ RUN if [ -n "${CUDA_VERSION_FOR_COMFY}" ]; then \
 
 WORKDIR /comfyui
 
+# comfy-cli's `install` doesn't always pull the full ComfyUI requirements.txt,
+# so newer deps (e.g. sqlalchemy/alembic/aiosqlite for the asset DB) go missing
+# and ComfyUI crashes on startup. Install them explicitly from ComfyUI's own
+# requirements file.
+RUN if [ -f /comfyui/requirements.txt ]; then \
+        /opt/venv/bin/pip install -q --root-user-action=ignore -r /comfyui/requirements.txt; \
+    fi && \
+    rm -rf /root/.cache/pip /root/.cache/uv && \
+    uv cache clean
+
 # Network-volume model-path config
 ADD src/extra_model_paths.yaml ./
 

@@ -578,12 +578,12 @@
       {
         "node_id": "57",
         "input_field": "image",
-        "r2_key": "refs/character.png"
+        "r2_key": "test-media/uploaded_image.PNG"
       },
       {
         "node_id": "63",
         "input_field": "video",
-        "r2_key": "drives/dance.mp4"
+        "r2_key": "test-media/uploaded_video.mp4"
       }
     ]
   }
