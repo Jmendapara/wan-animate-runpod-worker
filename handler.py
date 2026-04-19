@@ -459,10 +459,8 @@ def get_file_data(filename, subfolder, file_type):
 
 
 def _is_wanted_output(media_key, filename):
-    if media_key != "videos":
-        # Images and anything else — skip. The fixed Wan Animate workflow
-        # produces no other deliverables the caller cares about.
-        return False
+    # VHS_VideoCombine reports the MP4 under the legacy `gifs` key — check the
+    # filename regardless of which category ComfyUI filed it under.
     if not filename:
         return False
     return filename.endswith("-audio.mp4")
