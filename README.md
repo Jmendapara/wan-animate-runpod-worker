@@ -48,6 +48,7 @@ All 7 custom-node repos and all 9 model files the workflow needs are baked into 
       { "node_id": "57", "input_field": "image", "r2_key": "refs/character.png" },
       { "node_id": "63", "input_field": "video", "r2_key": "drives/dance.mp4" }
     ],
+    "uid": "u_abc123",
     "comfy_org_api_key": "optional-per-request-key"
   }
 }
@@ -57,6 +58,7 @@ All 7 custom-node repos and all 9 model files the workflow needs are baked into 
 |---|---|---|
 | `workflow` | yes | Complete ComfyUI workflow, exported via **Workflow → Save (API Format)** in the UI |
 | `r2_inputs` | no | Array of R2 objects to download into `/comfyui/input/` and wire into the workflow. Each entry needs `node_id`, `input_field`, and `r2_key`. `node_id` and `input_field` must match the workflow's structure exactly |
+| `uid` | no | If provided, the output is uploaded under `users/<uid>/generations/<uuid8>.<ext>`. If omitted, it lands at `<job_id>/<uuid8>.<ext>`. Must be non-empty and must not contain `/` |
 | `comfy_org_api_key` | no | For [Comfy.org API Nodes](https://docs.comfy.org/tutorials/api-nodes/overview). Overrides the `COMFY_ORG_API_KEY` env var |
 
 ### Output
@@ -67,13 +69,22 @@ All 7 custom-node repos and all 9 model files the workflow needs are baked into 
     {
       "filename": "Wanimate_00001-audio.mp4",
       "type": "s3_url",
-      "data": "https://<account>.r2.cloudflarestorage.com/<job_id>/1706212345-Wanimate_00001-audio.mp4"
+      "data": "https://<account>.r2.cloudflarestorage.com/<bucket>/users/u_abc123/generations/e1c70ba4.mp4?..."
     }
   ]
 }
 ```
 
+The `filename` field echoes ComfyUI's own filename (controlled by the workflow's save-node `filename_prefix`). The `data` URL's object key uses an 8-character UUID leaf for collision-safety, with the prefix derived from `uid` (if passed) or `job_id` (if not). The URL is a presigned GET that expires in 7 days.
+
 When `BUCKET_ENDPOINT_URL` is not set (local dev), the response returns `"type": "base64"` with the file contents. For production, always configure R2 — large videos will be truncated otherwise.
+
+#### R2 key scheme
+
+| Request has `uid`? | R2 key |
+|---|---|
+| No | `<job_id>/<8-char-uuid>.<ext>` |
+| Yes | `users/<uid>/generations/<8-char-uuid>.<ext>` |
 
 ### Errors
 
@@ -84,6 +95,7 @@ Non-2xx cases return `{"error": "..."}` with a one-line reason. Common causes:
 | `Missing 'workflow' parameter` | Forgot the `workflow` key in input |
 | `r2_inputs[N] is missing required field 'X'` | Malformed R2 input entry |
 | `r2_inputs references node_id 'X' which is not in the workflow` | Typo in `node_id`, or workflow mismatch |
+| `'uid' must be a non-empty string` / `'uid' must not contain '/'` | Invalid `uid` format |
 | `R2 credentials not configured` | One of `BUCKET_ENDPOINT_URL`, `BUCKET_ACCESS_KEY_ID`, `BUCKET_SECRET_ACCESS_KEY` is missing |
 | `ComfyUI was OOM-killed` | GPU ran out of VRAM — use a larger GPU or a more aggressive `blocks_to_swap` setting |
 | `Workflow validation failed` | A node references a model that isn't installed, or a required input is missing |

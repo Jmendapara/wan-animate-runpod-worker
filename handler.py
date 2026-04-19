@@ -1,5 +1,4 @@
 import runpod
-from runpod.serverless.utils import rp_upload
 import json
 import urllib.parse
 import time
@@ -8,7 +7,6 @@ import requests
 import base64
 import websocket
 import uuid
-import tempfile
 import socket
 import traceback
 import logging
@@ -205,6 +203,7 @@ def validate_input(job_input):
                 { "node_id": "57", "input_field": "image", "r2_key": "refs/character.png" },
                 { "node_id": "63", "input_field": "video", "r2_key": "drives/dance.mp4" }
             ],
+            "uid": "optional-user-id",
             "comfy_org_api_key": "optional"
         }
     """
@@ -235,11 +234,19 @@ def validate_input(job_input):
                         f"r2_inputs[{i}] is missing required field '{req}'",
                     )
 
+    uid = job_input.get("uid")
+    if uid is not None:
+        if not isinstance(uid, str) or not uid.strip():
+            return None, "'uid' must be a non-empty string"
+        if "/" in uid:
+            return None, "'uid' must not contain '/'"
+
     comfy_org_api_key = job_input.get("comfy_org_api_key")
 
     return {
         "workflow": workflow,
         "r2_inputs": r2_inputs or [],
+        "uid": uid,
         "comfy_org_api_key": comfy_org_api_key,
     }, None
 
@@ -266,6 +273,56 @@ def _make_s3_client():
         endpoint_url=endpoint,
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key,
+    )
+
+
+def _guess_content_type(ext):
+    ext = ext.lower()
+    return {
+        ".mp4": "video/mp4",
+        ".webm": "video/webm",
+        ".mov": "video/quicktime",
+        ".gif": "image/gif",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+    }.get(ext, "application/octet-stream")
+
+
+def upload_output_to_r2(file_bytes, filename, job_id, uid=None):
+    """
+    Upload output bytes to R2 and return a 7-day presigned URL.
+
+    Leaf: <8-char-uuid>.<ext>  — collision-free, matches the behavior of
+    RunPod's rp_upload helper but with a prefix we control.
+
+    Prefix:
+      - if uid is provided: users/<uid>/generations/
+      - otherwise:          <job_id>/
+    """
+    bucket = os.environ.get("R2_BUCKET_NAME")
+    if not bucket:
+        raise ValueError("R2_BUCKET_NAME must be set to upload outputs to R2.")
+
+    ext = os.path.splitext(filename)[1] or ".mp4"
+    leaf = f"{str(uuid.uuid4())[:8]}{ext}"
+    if uid:
+        key = f"users/{uid}/generations/{leaf}"
+    else:
+        key = f"{job_id}/{leaf}"
+
+    s3 = _make_s3_client()
+    s3.put_object(
+        Bucket=bucket,
+        Key=key,
+        Body=file_bytes,
+        ContentType=_guess_content_type(ext),
+    )
+    return s3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": key},
+        ExpiresIn=604800,  # 7 days
     )
 
 
@@ -484,6 +541,7 @@ def handler(job):
 
     workflow = validated_data["workflow"]
     r2_inputs = validated_data["r2_inputs"]
+    uid = validated_data.get("uid")
 
     if not check_server(
         f"http://{COMFY_HOST}/",
@@ -656,28 +714,13 @@ def handler(job):
                         errors.append(error_msg)
                         continue
 
-                    file_extension = os.path.splitext(filename)[1] or ".mp4"
-
                     if os.environ.get("BUCKET_ENDPOINT_URL"):
-                        temp_file_path = None
                         try:
-                            with tempfile.NamedTemporaryFile(
-                                suffix=file_extension, delete=False
-                            ) as temp_file:
-                                temp_file.write(file_bytes)
-                                temp_file_path = temp_file.name
-                            print(
-                                f"worker-comfyui - Wrote {filename} to temporary file: {temp_file_path}"
+                            print(f"worker-comfyui - Uploading {filename} to R2...")
+                            s3_url = upload_output_to_r2(
+                                file_bytes, filename, job_id, uid=uid
                             )
-                            print(f"worker-comfyui - Uploading {filename} to S3...")
-                            s3_url = rp_upload.upload_image(
-                                job_id,
-                                temp_file_path,
-                                bucket_name=os.environ.get("R2_BUCKET_NAME"),
-                            )
-                            print(
-                                f"worker-comfyui - Uploaded {filename} to S3: {s3_url}"
-                            )
+                            print(f"worker-comfyui - Uploaded {filename} to R2: {s3_url}")
                             output_videos.append(
                                 {
                                     "filename": filename,
@@ -686,17 +729,9 @@ def handler(job):
                                 }
                             )
                         except Exception as e:
-                            error_msg = f"Error uploading {filename} to S3: {e}"
+                            error_msg = f"Error uploading {filename} to R2: {e}"
                             print(f"worker-comfyui - {error_msg}")
                             errors.append(error_msg)
-                        finally:
-                            if temp_file_path and os.path.exists(temp_file_path):
-                                try:
-                                    os.remove(temp_file_path)
-                                except OSError as rm_err:
-                                    print(
-                                        f"worker-comfyui - Error removing temp file {temp_file_path}: {rm_err}"
-                                    )
                     else:
                         try:
                             file_size_mb = len(file_bytes) / (1024 * 1024)

@@ -585,6 +585,7 @@
         "input_field": "video",
         "r2_key": "test-media/uploaded_video.mp4"
       }
-    ]
+    ],
+    "uid": "test-user-123"
   }
 }
