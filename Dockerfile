@@ -76,12 +76,17 @@ RUN if [ -f /comfyui/requirements.txt ]; then \
 # Network-volume model-path config
 ADD src/extra_model_paths.yaml ./
 
-# Install the 7 custom-node repos this workflow needs.
+# Install the 8 custom-node repos this workflow needs.
 # Using inline git clone (not comfy-node-install) because these are pinned repos
 # that aren't all on the Comfy registry, and we want deterministic builds.
 # All pip installs go through /opt/venv/bin/pip — this is what broke us when
 # testing setup.sh on a slim pod (installs landed in system site-packages
 # and the running ComfyUI venv never saw them).
+#
+# ComfyUI-Frame-Interpolation (RIFE VFI) needs cupy. Its requirements.txt pulls
+# cupy-wheel, which tries to compile from source and silently fails on Python
+# 3.12 (no pkg_resources). We install the prebuilt `cupy-cuda12x` wheel after
+# the loop so RIFE registers at ComfyUI startup.
 RUN cd /comfyui/custom_nodes && \
     for repo in \
         https://github.com/kijai/ComfyUI-WanVideoWrapper.git \
@@ -91,6 +96,7 @@ RUN cd /comfyui/custom_nodes && \
         https://github.com/ltdrdata/ComfyUI-Impact-Pack.git \
         https://github.com/cubiq/ComfyUI_essentials.git \
         https://github.com/kijai/ComfyUI-segment-anything-2.git \
+        https://github.com/Fannovel16/ComfyUI-Frame-Interpolation.git \
     ; do \
         name=$(basename "$repo" .git); \
         echo "=== Cloning $name ==="; \
@@ -99,6 +105,7 @@ RUN cd /comfyui/custom_nodes && \
             /opt/venv/bin/pip install -q --root-user-action=ignore -r "$name/requirements.txt"; \
         fi; \
     done && \
+    /opt/venv/bin/pip install -q --root-user-action=ignore cupy-cuda12x && \
     rm -rf /root/.cache/pip /root/.cache/uv && \
     uv cache clean
 
