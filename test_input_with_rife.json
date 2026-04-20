@@ -581,6 +581,9 @@
           "fast_mode": true,
           "ensemble": true,
           "scale_factor": 1.0,
+          "dtype": "float32",
+          "batch_size": 1,
+          "torch_compile": false,
           "frames": [
             "28",
             0

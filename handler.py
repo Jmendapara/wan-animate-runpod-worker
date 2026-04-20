@@ -561,6 +561,56 @@ def probe_video_fps(local_path):
         return None
 
 
+def probe_video_duration_sec(local_path):
+    """Return the driving video's *video stream* duration in seconds (not
+    container duration — that can include trailing audio padding and would
+    over-report for phone clips). Falls back to format duration if the stream
+    reports 'N/A'. Returns None on failure.
+
+    Used to trim the output back to the user's intended length: Wan's
+    `WanVideoAnimateEmbeds.frame_window_size = 77` pads the driving sequence
+    up to the next multiple of 77 by mirroring the tail, which leaks 3–4s of
+    reversed playback onto the end of every generation. We trim it off via
+    `ffmpeg -t <duration>` as the last step.
+    """
+    import subprocess
+    def _parse(out):
+        s = (out or "").strip()
+        if not s or s == "N/A":
+            return None
+        try:
+            return float(s)
+        except ValueError:
+            return None
+    try:
+        stream = subprocess.run(
+            [
+                "ffprobe", "-v", "0", "-of", "csv=p=0",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=duration",
+                local_path,
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        val = _parse(stream.stdout)
+        if val is not None and val > 0:
+            return val
+        # Fallback: container/format-level duration
+        fmt = subprocess.run(
+            [
+                "ffprobe", "-v", "0", "-of", "csv=p=0",
+                "-show_entries", "format=duration",
+                local_path,
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        val = _parse(fmt.stdout)
+        return val if (val is not None and val > 0) else None
+    except Exception as exc:
+        print(f"worker-comfyui - ffprobe duration failed for {local_path}: {exc}")
+        return None
+
+
 def pick_target_fps(native_fps):
     """Round a native fps down to one of {16, 24, 30, 50, 60}.
 
@@ -652,40 +702,55 @@ def configure_rife_for_target(workflow, target_fps):
     return 64
 
 
-def resample_fps(file_bytes, target_fps, current_fps):
-    """Re-encode mp4 bytes to a different container fps via ffmpeg's fps filter.
-    Drops/duplicates frames evenly. Audio is stream-copied untouched.
-    Returns the original bytes on ffmpeg failure or when target == current.
+def postprocess_video(file_bytes, target_fps, current_fps, target_duration_sec=None):
+    """Re-encode mp4 bytes with optional fps resample + optional duration trim
+    in a single ffmpeg pass. Audio is stream-copied untouched.
+
+    Returns original bytes on ffmpeg failure or when there's nothing to do.
+
+    - fps resample fires when `target_fps != current_fps`
+    - duration trim fires when `target_duration_sec` is a positive number
     """
-    if not file_bytes or target_fps == current_fps:
+    if not file_bytes:
         return file_bytes
+    needs_fps = target_fps != current_fps
+    needs_trim = (
+        target_duration_sec is not None
+        and isinstance(target_duration_sec, (int, float))
+        and target_duration_sec > 0
+    )
+    if not (needs_fps or needs_trim):
+        return file_bytes
+
     import subprocess, tempfile
     in_path = out_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as inf:
             inf.write(file_bytes)
             in_path = inf.name
-        out_path = in_path + f"_{target_fps}.mp4"
+        out_path = in_path + "_pp.mp4"
+
+        cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", in_path]
+        if needs_trim:
+            cmd += ["-t", f"{float(target_duration_sec):.3f}"]
+        if needs_fps:
+            cmd += ["-vf", f"fps={target_fps}"]
+        cmd += ["-c:a", "copy", out_path]
+
         result = subprocess.run(
-            [
-                "ffmpeg", "-y", "-loglevel", "error",
-                "-i", in_path,
-                "-vf", f"fps={target_fps}",
-                "-c:a", "copy",
-                out_path,
-            ],
-            capture_output=True, text=True, timeout=300,
+            cmd, capture_output=True, text=True, timeout=300,
         )
         if result.returncode != 0:
             print(
-                f"worker-comfyui - ffmpeg fps resample to {target_fps} failed: "
+                f"worker-comfyui - ffmpeg post-process failed "
+                f"(fps={needs_fps}, trim={needs_trim}): "
                 f"{result.stderr.strip()[:500]}"
             )
             return file_bytes
         with open(out_path, "rb") as f:
             return f.read()
     except Exception as exc:
-        print(f"worker-comfyui - resample_fps error: {exc}")
+        print(f"worker-comfyui - postprocess_video error: {exc}")
         return file_bytes
     finally:
         for p in (in_path, out_path):
@@ -748,17 +813,25 @@ def handler(job):
     # to one of {16, 24, 30, 50, 60}. Wan2.2-Animate emits 16 fps; RIFE is used
     # at ×2 (→32 fps) or ×4 (→64 fps) when needed. ffmpeg trims the intermediate
     # down to the exact bucket value after ComfyUI finishes.
+    #
+    # We also probe the driving video's actual duration here so we can pass
+    # `-t <duration>` to ffmpeg later. Wan's `frame_window_size: 77` pads the
+    # driving sequence up to the next multiple of 77 by mirroring the tail,
+    # which adds 3–4s of reversed playback to every output. Trimming back to
+    # the driving video's true duration removes that artefact.
     driving_video_path = _find_driving_video_local_path(r2_inputs)
     if driving_video_path and os.path.exists(driving_video_path):
         native_fps = probe_video_fps(driving_video_path)
+        driving_duration_sec = probe_video_duration_sec(driving_video_path)
     else:
         native_fps = None
+        driving_duration_sec = None
     target_fps = pick_target_fps(native_fps)
     intermediate_fps = configure_rife_for_target(workflow, target_fps)
     print(
         f"worker-comfyui - driving_video={driving_video_path!s}, "
-        f"native_fps={native_fps}, target_fps={target_fps}, "
-        f"intermediate_fps={intermediate_fps}"
+        f"native_fps={native_fps}, driving_duration_sec={driving_duration_sec}, "
+        f"target_fps={target_fps}, intermediate_fps={intermediate_fps}"
     )
 
     ws = None
@@ -915,25 +988,24 @@ def handler(job):
                         errors.append(error_msg)
                         continue
 
-                    # Match output fps to the driving video's target bucket. ComfyUI
-                    # emits at `intermediate_fps` (16, 32, or 64); ffmpeg trims down
-                    # to target when they differ. Targets that happen to match the
-                    # intermediate (e.g. 24/30 target when intermediate is 32 — no,
-                    # they differ; the only no-op cases are target 16 on 16 fps
-                    # intermediate) skip the ffmpeg step.
-                    if (
-                        filename.lower().endswith(".mp4")
-                        and target_fps != intermediate_fps
-                    ):
+                    # Post-process mp4 output: trim off Wan's 77-frame-window
+                    # mirror-padding and resample to the target fps bucket in a
+                    # single ffmpeg pass. No-op if neither is needed.
+                    if filename.lower().endswith(".mp4"):
                         original_size = len(file_bytes)
-                        file_bytes = resample_fps(
-                            file_bytes, target_fps, current_fps=intermediate_fps
+                        file_bytes = postprocess_video(
+                            file_bytes,
+                            target_fps=target_fps,
+                            current_fps=intermediate_fps,
+                            target_duration_sec=driving_duration_sec,
                         )
-                        print(
-                            f"worker-comfyui - Resampled {filename} from "
-                            f"{intermediate_fps} -> {target_fps} fps "
-                            f"({original_size} -> {len(file_bytes)} bytes)"
-                        )
+                        if len(file_bytes) != original_size:
+                            print(
+                                f"worker-comfyui - Post-processed {filename}: "
+                                f"{intermediate_fps}→{target_fps}fps, "
+                                f"trim_to={driving_duration_sec}s "
+                                f"({original_size} → {len(file_bytes)} bytes)"
+                            )
 
                     if os.environ.get("BUCKET_ENDPOINT_URL"):
                         try:
