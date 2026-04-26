@@ -515,12 +515,18 @@ def get_file_data(filename, subfolder, file_type):
 # ---------------------------------------------------------------------------
 
 
-def _is_wanted_output(media_key, filename):
+def _is_wanted_output(media_key, filename, *, has_audio_variant=True):
     # VHS_VideoCombine reports the MP4 under the legacy `gifs` key — check the
     # filename regardless of which category ComfyUI filed it under.
     if not filename:
         return False
-    return filename.endswith("-audio.mp4")
+    if filename.endswith("-audio.mp4"):
+        return True
+    # When the driving video has no audio track, VHS_VideoCombine only produces
+    # the silent .mp4 (no -audio.mp4 variant). Accept it as a fallback.
+    if not has_audio_variant and filename.endswith(".mp4"):
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -951,6 +957,25 @@ def handler(job):
                 errors.append(warning_msg)
 
         print(f"worker-comfyui - Processing {len(outputs)} output nodes...")
+
+        # Pre-scan: check whether any -audio.mp4 exists across all output
+        # nodes. When the driving video has no audio track, VHS_VideoCombine
+        # only writes the silent .mp4 — we fall back to it in that case.
+        has_audio_variant = False
+        for _nid, _nout in outputs.items():
+            for _mk in ("images", "videos", "gifs"):
+                for _item in _nout.get(_mk, []):
+                    fn = _item.get("filename") or ""
+                    if fn.endswith("-audio.mp4"):
+                        has_audio_variant = True
+                        break
+                if has_audio_variant:
+                    break
+            if has_audio_variant:
+                break
+        if not has_audio_variant:
+            print("worker-comfyui - No -audio.mp4 found in outputs, will accept silent .mp4 as fallback")
+
         for node_id, node_output in outputs.items():
             for media_key in ("images", "videos", "gifs"):
                 if media_key not in node_output:
@@ -972,8 +997,9 @@ def handler(job):
                         continue
 
                     # Filter out VHS sidecars (silent .mp4, .png thumbnail).
-                    # Only the -audio.mp4 from node 186 is the deliverable.
-                    if not _is_wanted_output(media_key, filename):
+                    # Prefer -audio.mp4 when available; fall back to silent
+                    # .mp4 when the driving video had no audio track.
+                    if not _is_wanted_output(media_key, filename, has_audio_variant=has_audio_variant):
                         print(
                             f"worker-comfyui - Skipping sidecar {media_key} {filename}"
                         )
